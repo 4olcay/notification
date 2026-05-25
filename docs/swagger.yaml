@@ -1,0 +1,532 @@
+basePath: /
+definitions:
+  apiresponse.PageMeta:
+    properties:
+      limit:
+        type: integer
+      offset:
+        type: integer
+      total:
+        type: integer
+    type: object
+  notification.Batch:
+    properties:
+      cancelled:
+        type: integer
+      created_at:
+        type: string
+      delivered:
+        type: integer
+      failed:
+        type: integer
+      id:
+        type: string
+      pending:
+        type: integer
+      processing:
+        type: integer
+      total:
+        type: integer
+      updated_at:
+        type: string
+    type: object
+  notification.Channel:
+    enum:
+    - sms
+    - email
+    - push
+    type: string
+    x-enum-varnames:
+    - ChannelSMS
+    - ChannelEmail
+    - ChannelPush
+  notification.Notification:
+    properties:
+      batch_id:
+        type: string
+      channel:
+        $ref: '#/definitions/notification.Channel'
+      content:
+        type: string
+      created_at:
+        type: string
+      delivered_at:
+        type: string
+      error_message:
+        type: string
+      id:
+        type: string
+      idempotency_key:
+        type: string
+      max_retries:
+        type: integer
+      next_retry_at:
+        type: string
+      priority:
+        $ref: '#/definitions/notification.Priority'
+      provider_msg_id:
+        type: string
+      recipient:
+        type: string
+      retry_count:
+        type: integer
+      scheduled_at:
+        type: string
+      status:
+        $ref: '#/definitions/notification.Status'
+      updated_at:
+        type: string
+    type: object
+  notification.Priority:
+    enum:
+    - high
+    - normal
+    - low
+    type: string
+    x-enum-varnames:
+    - PriorityHigh
+    - PriorityNormal
+    - PriorityLow
+  notification.Status:
+    enum:
+    - pending
+    - queued
+    - processing
+    - delivered
+    - failed
+    - retrying
+    - dead_letter
+    - cancelled
+    type: string
+    x-enum-varnames:
+    - StatusPending
+    - StatusQueued
+    - StatusProcessing
+    - StatusDelivered
+    - StatusFailed
+    - StatusRetrying
+    - StatusDeadLetter
+    - StatusCancelled
+  notification.createBatchRequest:
+    properties:
+      notifications:
+        items:
+          $ref: '#/definitions/notification.createRequest'
+        maxItems: 1000
+        minItems: 1
+        type: array
+    required:
+    - notifications
+    type: object
+  notification.createRequest:
+    properties:
+      channel:
+        enum:
+        - sms
+        - email
+        - push
+        type: string
+      content:
+        type: string
+      idempotency_key:
+        type: string
+      priority:
+        enum:
+        - high
+        - normal
+        - low
+        type: string
+      recipient:
+        type: string
+      scheduled_at:
+        type: string
+    required:
+    - channel
+    - content
+    - recipient
+    type: object
+  template.CreateRequest:
+    properties:
+      body:
+        minLength: 1
+        type: string
+      channel:
+        enum:
+        - sms
+        - email
+        - push
+        type: string
+      name:
+        maxLength: 100
+        minLength: 1
+        type: string
+      subject:
+        type: string
+    required:
+    - body
+    - channel
+    - name
+    type: object
+  template.RenderRequest:
+    properties:
+      variables:
+        additionalProperties:
+          type: string
+        type: object
+    type: object
+  template.RenderResponse:
+    properties:
+      body:
+        type: string
+      subject:
+        type: string
+    type: object
+  template.Template:
+    properties:
+      body:
+        type: string
+      channel:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      subject:
+        type: string
+      updated_at:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: Event-driven multi-channel notification service (SMS, Email, Push)
+    with priority queuing, idempotency, scheduled delivery, template rendering, and
+    automatic retry support.
+  title: Notification System API
+  version: "1.0"
+paths:
+  /batches/{batch_id}:
+    get:
+      description: Returns batch metadata with notification counts computed live from
+        the notifications table.
+      parameters:
+      - description: Batch UUID
+        in: path
+        name: batch_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/notification.Batch'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get batch status with live counts
+      tags:
+      - notifications
+  /notifications:
+    get:
+      parameters:
+      - description: Filter by status (pending|queued|processing|delivered|failed|retrying|dead_letter|cancelled)
+        in: query
+        name: status
+        type: string
+      - description: Filter by channel (sms|email|push)
+        in: query
+        name: channel
+        type: string
+      - description: Created after Unix timestamp
+        in: query
+        name: from
+        type: integer
+      - description: Created before Unix timestamp
+        in: query
+        name: to
+        type: integer
+      - description: Page size (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Page offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/apiresponse.PageMeta'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List notifications
+      tags:
+      - notifications
+    post:
+      consumes:
+      - application/json
+      description: Persists and enqueues a single notification. Returns 202 for new,
+        200 for idempotent duplicate.
+      parameters:
+      - description: Notification payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/notification.createRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/notification.Notification'
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/notification.Notification'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a notification
+      tags:
+      - notifications
+  /notifications/{id}:
+    delete:
+      parameters:
+      - description: Notification UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Notification is no longer pending
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Cancel a pending notification
+      tags:
+      - notifications
+    get:
+      parameters:
+      - description: Notification UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/notification.Notification'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get a notification by ID
+      tags:
+      - notifications
+  /notifications/batch:
+    post:
+      consumes:
+      - application/json
+      description: Persists up to 1000 notifications under a shared batch ID and enqueues
+        them for processing.
+      parameters:
+      - description: Batch payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/notification.createBatchRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/notification.Batch'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a batch of notifications
+      tags:
+      - notifications
+  /templates:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/template.Template'
+            type: array
+      summary: List all templates
+      tags:
+      - templates
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Template definition
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/template.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/template.Template'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a notification template
+      tags:
+      - templates
+  /templates/{name}:
+    delete:
+      parameters:
+      - description: Template name
+        in: path
+        name: name
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Delete a template
+      tags:
+      - templates
+  /templates/{name}/render:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Template name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Variable map
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/template.RenderRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/template.RenderResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Render a template with variable substitution
+      tags:
+      - templates
+  /ws/notifications/{id}:
+    get:
+      description: Upgrades the HTTP connection to WebSocket. The server pushes a
+      parameters:
+      - description: Notification ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "101":
+          description: Switching Protocols
+      summary: Subscribe to real-time status updates for a notification
+      tags:
+      - websocket
+swagger: "2.0"

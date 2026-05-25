@@ -1,0 +1,120 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    restart: on-failure
+    environment:
+      - SERVER_PORT=8080
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_DATABASE=notifications_db
+      - DB_SSLMODE=disable
+      - KAFKA_BROKERS=redpanda:9092
+      - KAFKA_TOPIC_HIGH=notifications.high
+      - KAFKA_TOPIC_NORMAL=notifications.normal
+      - KAFKA_TOPIC_LOW=notifications.low
+      - KAFKA_TOPIC_DEAD_LETTER=notifications.dead_letter
+      - KAFKA_GROUP_ID=notification-workers
+      - PROVIDER_WEBHOOK_URL=https://webhook.site/uuid
+      - PROVIDER_TIMEOUT=10s
+      - PROVIDER_CIRCUIT_BREAKER_THRESHOLD=5
+      - PROVIDER_CIRCUIT_BREAKER_RESET=30s
+      - WORKER_CONCURRENCY=10
+      - WORKER_RATE_LIMIT_PER_SEC=100
+      - WORKER_MAX_RETRIES=5
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=notifications_db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  redpanda:
+    image: redpandadata/redpanda:v24.1.1
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --mode dev-container
+      - --smp 1
+      - --memory 1G
+      - --default-log-level=warn
+    ports:
+      - "19092:19092"
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+
+  redpanda-console:
+    image: redpandadata/console:v2.5.2
+    ports:
+      - "8888:8080"
+    environment:
+      - KAFKA_BROKERS=redpanda:9092
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    restart: unless-stopped
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4318:4318"    # OTLP HTTP receiver
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+
+  k6:
+    image: grafana/k6:latest
+    profiles: ["test"]
+    volumes:
+      - ./loadtest:/scripts
+    command: run /scripts/script.js
+    environment:
+      - TARGET_HOST=app:8080
+      - RESULTS_PATH=/scripts/results.json
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  redpanda-data:
