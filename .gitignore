@@ -1,0 +1,22 @@
+# IDE & tools
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build output
+bin/
+dist/
+*.exe
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Go
+vendor/
+
+# OS
+.DS_Store
+Thumbs.db
